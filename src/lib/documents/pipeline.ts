@@ -104,10 +104,7 @@ export async function importDatasetDocuments(
   const entries = await fs.readdir(resourcesDirectory, { withFileTypes: true });
   const documentFiles = entries
     .filter(
-      (entry) =>
-        entry.isFile() &&
-        /^(data_|img_|invoice_|po_|text_)/.test(entry.name) &&
-        isSupportedDocument(entry.name)
+      (entry) => entry.isFile() && isSupportedDocument(entry.name)
     )
     .map((entry) => entry.name)
     .sort((left, right) => left.localeCompare(right));

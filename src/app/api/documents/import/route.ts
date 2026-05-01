@@ -14,10 +14,7 @@ export async function POST() {
   const resourcesDirectory = path.join(process.cwd(), "resources");
   const entries = await readdir(resourcesDirectory, { withFileTypes: true });
   const total = entries.filter(
-    (e) =>
-      e.isFile() &&
-      /^(data_|img_|invoice_|po_|text_)/.test(e.name) &&
-      isSupportedDocument(e.name)
+    (e) => e.isFile() && isSupportedDocument(e.name)
   ).length;
 
   importState.running = true;
