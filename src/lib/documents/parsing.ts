@@ -8,14 +8,30 @@ import type {
 
 const CURRENCIES = ["BAM", "EUR", "USD", "GBP", "CHF"];
 
+const SYMBOL_TO_CURRENCY: Record<string, string> = {
+  "$": "USD",
+  "€": "EUR",
+  "£": "GBP",
+  "¥": "JPY",
+  "₹": "INR",
+  "₽": "RUB",
+  "₩": "KRW"
+};
+
+const MONTH_NAMES: Record<string, string> = {
+  january: "01", february: "02", march: "03", april: "04",
+  may: "05", june: "06", july: "07", august: "08",
+  september: "09", october: "10", november: "11", december: "12",
+  jan: "01", feb: "02", mar: "03", apr: "04", jun: "06",
+  jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12"
+};
+
 function parseAmount(value: string | undefined | null) {
   if (!value) {
     return null;
   }
 
   const stripped = value.replace(/[^0-9,.-]/g, "");
-  // Both comma and dot present: comma is thousands separator, dot is decimal
-  // Only comma: European decimal separator
   const normalized = stripped.includes(",") && stripped.includes(".")
     ? stripped.replace(/,/g, "")
     : stripped.replace(",", ".");
@@ -33,20 +49,33 @@ function normalizeDate(value: string | undefined | null) {
   }
 
   const cleaned = value.trim().replace(/[.,]$/, "");
-  const isoLike = /^\d{4}-\d{2}-\d{2}$/;
-  const european = /^(\d{2})[./-](\d{2})[./-](\d{4})$/;
 
-  if (isoLike.test(cleaned)) {
+  // YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) {
     return cleaned;
   }
 
-  const match = cleaned.match(european);
-
-  if (!match) {
-    return null;
+  // DD.MM.YYYY / DD/MM/YYYY / DD-MM-YYYY
+  const european = cleaned.match(/^(\d{1,2})[./-](\d{2})[./-](\d{4})$/);
+  if (european) {
+    return `${european[3]}-${european[2]}-${european[1].padStart(2, "0")}`;
   }
 
-  return `${match[3]}-${match[2]}-${match[1]}`;
+  // "15 March 2026" / "15 Mar 2026"
+  const dayMonthYear = cleaned.match(/^(\d{1,2})\s+([a-zA-Z]+)\s+(\d{4})$/);
+  if (dayMonthYear) {
+    const month = MONTH_NAMES[dayMonthYear[2].toLowerCase()];
+    if (month) return `${dayMonthYear[3]}-${month}-${dayMonthYear[1].padStart(2, "0")}`;
+  }
+
+  // "March 15, 2026" / "Mar 15 2026"
+  const monthDayYear = cleaned.match(/^([a-zA-Z]+)\s+(\d{1,2}),?\s+(\d{4})$/);
+  if (monthDayYear) {
+    const month = MONTH_NAMES[monthDayYear[1].toLowerCase()];
+    if (month) return `${monthDayYear[3]}-${month}-${monthDayYear[2].padStart(2, "0")}`;
+  }
+
+  return null;
 }
 
 function inferDocumentType(fileName: string, text: string): DocumentKind {
@@ -64,9 +93,17 @@ function inferDocumentType(fileName: string, text: string): DocumentKind {
 }
 
 function findCurrency(text: string) {
+  // Explicit currency codes first
   for (const currency of CURRENCIES) {
     if (text.toUpperCase().includes(currency)) {
       return currency;
+    }
+  }
+
+  // Fall back to currency symbols
+  for (const [symbol, code] of Object.entries(SYMBOL_TO_CURRENCY)) {
+    if (text.includes(symbol)) {
+      return code;
     }
   }
 
@@ -107,7 +144,7 @@ function parseLineItemsFromCsv(rawText: string): LineItem[] {
 
 function parseLineItemsFromText(rawText: string): LineItem[] {
   const sectionMatch = rawText.match(
-    /Description\s+(.*?)(?:Subtotal|Tax|Total:|Total\s+\d)/is
+    /Description\s+(.*?)(?:Sub\s*Total|Subtotal|Tax|Total:|Total\s+\d)/is
   );
   const section = sectionMatch?.[1]?.trim();
 
@@ -137,36 +174,55 @@ function buildGenericData(fileName: string, rawText: string): ExtractedDocumentD
   const data = createEmptyExtractedData();
 
   data.documentType = inferDocumentType(fileName, rawText);
+
   data.supplierName = extractSingleValue(text, [
     /Supplier\s*:\s*(.+?)(?=\s+(?:Number|Date|Due|Total|Subtotal|Tax)\b)/i,
-    /Company\s*:\s*(.+?)(?=\s+(?:Number|Date|Due|Total|Subtotal|Tax)\b)/i
+    /Company\s*:\s*(.+?)(?=\s+(?:Number|Date|Due|Total|Subtotal|Tax)\b)/i,
+    /From\s*:\s*(.+?)(?=\s+(?:Number|Date|Due|Total|Subtotal|Tax)\b)/i,
+    /Bill(?:ed)?\s+(?:from|by)\s*:\s*(.+?)(?=\s+(?:Number|Date|Due|Total)\b)/i,
+    // Company name by suffix: "Acme Corp", "Acme, Ltd.", "Acme Inc." etc.
+    /\b([A-Z][A-Za-z0-9 &,]+(?:Ltd\.?|Inc\.?|LLC|Corp\.?|GmbH|Co\.?|Limited|Incorporated))/
   ]);
+
   data.documentNumber = extractSingleValue(text, [
-    /(?:Invoice|Purchase Order)?\s*Number\s*:\s*([A-Z0-9-]+)/i,
-    /(?:Invoice|PO)\s*(?:No\.?|#)\s*:\s*([A-Z0-9-]+)/i,
+    /(?:Invoice|Purchase Order)?\s*(?:No\.?|Number|#)\s*:?\s*([A-Z0-9-]+)/i,
+    /(?:Invoice|PO)\s*(?:No\.?|#)\s*:?\s*([A-Z0-9-]+)/i,
     /\b(PO-\d+|INV-\d+|TXT-\d+)\b/i
   ])?.toUpperCase() ?? null;
+
+  // Dates — support both numeric and text month formats
   data.issueDate = normalizeDate(
     extractSingleValue(text, [
-      /(?:Issue\s+Date|Invoice\s+Date|Date)\s*:\s*([0-9./-]+)/i
+      /(?:Issue\s+Date|Invoice\s+Date|Date\s+of\s+Issue|Date)\s*:\s*([0-9A-Za-z ,\/./-]+?)(?=\s{2,}|\s*(?:Due|Number|Invoice|Total)|$)/i
     ])
   );
+
   data.dueDate = normalizeDate(
-    extractSingleValue(text, [/Due\s+Date\s*:\s*([0-9./-]+)/i])
+    extractSingleValue(text, [
+      /Due\s+Date\s*:\s*([0-9A-Za-z ,\/./-]+?)(?=\s{2,}|\s*(?:Payment|Invoice|Total|Number)|$)/i
+    ])
   );
+
   data.currency = findCurrency(text);
+
+  // Sub Total / Subtotal (with or without space)
   data.subtotal = extractNumericValue(
     text,
-    /Subtotal\s*[:\-]?\s*([0-9]+(?:[.,][0-9]+)?)/gi
+    /Sub\s*[Tt]otal\s*[:\-]?\s*\$?\s*([0-9]+(?:[.,][0-9]+)?)/gi
   );
+
+  // Tax — skip percentage value, capture the actual amount
   data.tax = extractNumericValue(
     text,
-    /Tax(?:\s*\([^)]+\))?\s*[:\-]?\s*([0-9]+(?:[.,][0-9]+)?)/gi
+    /Tax(?:\s*\([^)]+\))?(?:\s+[0-9]+%)?\s*[:\-]?\s*\$?\s*([0-9]+(?:[.,][0-9]+)?)(?!\s*%)/gi
   );
+
+  // Grand Total / Total
   data.total = extractNumericValue(
     text,
-    /(?:^|\s)Total\s*[:\-]?\s*([0-9]+(?:[.,][0-9]+)?)/gi
+    /(?:Grand\s+)?Total\s*[:\-]?\s*\$?\s*([0-9]+(?:[.,][0-9]+)?)(?!\s*%)/gi
   );
+
   data.lineItems = parseLineItemsFromText(rawText);
 
   return data;
