@@ -1,7 +1,7 @@
 const { createWorker } = require("tesseract.js");
-const path = require("path");
 
-const LOCAL_LANG_PATH = process.cwd(); // eng.traineddata lives here
+const LOCAL_LANG_PATH = process.cwd();
+const CONFIDENCE_THRESHOLD = 60;
 
 const SCRIPT_TO_LANG = {
   Latin: "eng",
@@ -17,8 +17,17 @@ const SCRIPT_TO_LANG = {
   Thai: "tha",
 };
 
+async function ocr(filePath, lang) {
+  const opts = lang === "eng"
+    ? { langPath: LOCAL_LANG_PATH, logger: () => {} }
+    : { logger: () => {} };
+  const worker = await createWorker(lang, 1, opts);
+  const { data } = await worker.recognize(filePath);
+  await worker.terminate();
+  return data;
+}
+
 async function detectLang(filePath) {
-  // No langPath — tesseract.js downloads osd.traineddata from CDN and caches it
   try {
     const worker = await createWorker("osd", 1, { logger: () => {} });
     const { data } = await worker.detect(filePath);
@@ -29,36 +38,32 @@ async function detectLang(filePath) {
   }
 }
 
-async function runOcr(filePath, lang) {
-  // Use local eng.traineddata for English; CDN for everything else
-  const opts = lang === "eng"
-    ? { langPath: LOCAL_LANG_PATH, logger: () => {} }
-    : { logger: () => {} };
-  const worker = await createWorker(lang, 1, opts);
-  const { data } = await worker.recognize(filePath);
-  await worker.terminate();
-  return data.text;
-}
-
 async function main() {
   const filePath = process.argv[2];
+  if (!filePath) throw new Error("An image file path is required.");
 
-  if (!filePath) {
-    throw new Error("An image file path is required.");
+  // Fast path: try eng first (local file, no download, single worker)
+  const engData = await ocr(filePath, "eng");
+
+  if (engData.confidence >= CONFIDENCE_THRESHOLD) {
+    process.stdout.write(engData.text);
+    return;
   }
 
+  // Low confidence — detect script and retry with correct language
   const lang = await detectLang(filePath);
 
+  if (lang === "eng") {
+    process.stdout.write(engData.text);
+    return;
+  }
+
   try {
-    const text = await runOcr(filePath, lang);
-    process.stdout.write(text);
+    const retryData = await ocr(filePath, lang);
+    process.stdout.write(retryData.text);
   } catch {
-    if (lang !== "eng") {
-      const text = await runOcr(filePath, "eng");
-      process.stdout.write(text);
-    } else {
-      throw new Error("OCR failed for this image.");
-    }
+    // Language data unavailable — use eng result
+    process.stdout.write(engData.text);
   }
 }
 
