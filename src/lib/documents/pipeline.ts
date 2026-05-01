@@ -106,17 +106,22 @@ export async function importDatasetDocuments() {
     .map((entry) => entry.name)
     .sort((left, right) => left.localeCompare(right));
 
+  const CONCURRENCY = 3;
   const results = [];
 
-  for (const fileName of documentFiles) {
-    results.push(
-      await processDocumentFile({
-        documentId: buildDatasetDocumentId(fileName),
-        sourceName: fileName,
-        sourceType: "dataset",
-        filePath: path.join(resourcesDirectory, fileName)
-      })
+  for (let i = 0; i < documentFiles.length; i += CONCURRENCY) {
+    const batch = documentFiles.slice(i, i + CONCURRENCY);
+    const batchResults = await Promise.all(
+      batch.map((fileName) =>
+        processDocumentFile({
+          documentId: buildDatasetDocumentId(fileName),
+          sourceName: fileName,
+          sourceType: "dataset",
+          filePath: path.join(resourcesDirectory, fileName)
+        })
+      )
     );
+    results.push(...batchResults);
   }
 
   return results;
