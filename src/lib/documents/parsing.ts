@@ -13,7 +13,12 @@ function parseAmount(value: string | undefined | null) {
     return null;
   }
 
-  const normalized = value.replace(/[^0-9,.-]/g, "").replace(",", ".");
+  const stripped = value.replace(/[^0-9,.-]/g, "");
+  // Both comma and dot present: comma is thousands separator, dot is decimal
+  // Only comma: European decimal separator
+  const normalized = stripped.includes(",") && stripped.includes(".")
+    ? stripped.replace(/,/g, "")
+    : stripped.replace(",", ".");
   const parsed = Number.parseFloat(normalized);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -47,7 +52,7 @@ function normalizeDate(value: string | undefined | null) {
 function inferDocumentType(fileName: string, text: string): DocumentKind {
   const normalized = `${fileName} ${text}`.toLowerCase();
 
-  if (normalized.includes("purchase order") || normalized.includes("po-")) {
+  if (normalized.includes("purchase order") || normalized.includes("po-") || normalized.includes("po_")) {
     return "purchase_order";
   }
 
