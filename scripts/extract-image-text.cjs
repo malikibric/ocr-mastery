@@ -1,10 +1,8 @@
 const { createWorker } = require("tesseract.js");
 const path = require("path");
 
-// traineddata files are cached here alongside eng.traineddata
-const LANG_PATH = process.cwd();
+const LOCAL_LANG_PATH = process.cwd(); // eng.traineddata lives here
 
-// Maps tesseract OSD script names → tesseract language codes
 const SCRIPT_TO_LANG = {
   Latin: "eng",
   Cyrillic: "rus",
@@ -20,9 +18,9 @@ const SCRIPT_TO_LANG = {
 };
 
 async function detectLang(filePath) {
-  // osd.traineddata is downloaded to LANG_PATH on first use and cached
+  // No langPath — tesseract.js downloads osd.traineddata from CDN and caches it
   try {
-    const worker = await createWorker("osd", 1, { langPath: LANG_PATH, logger: () => {} });
+    const worker = await createWorker("osd", 1, { logger: () => {} });
     const { data } = await worker.detect(filePath);
     await worker.terminate();
     return SCRIPT_TO_LANG[data.script] ?? "eng";
@@ -32,7 +30,11 @@ async function detectLang(filePath) {
 }
 
 async function runOcr(filePath, lang) {
-  const worker = await createWorker(lang, 1, { langPath: LANG_PATH, logger: () => {} });
+  // Use local eng.traineddata for English; CDN for everything else
+  const opts = lang === "eng"
+    ? { langPath: LOCAL_LANG_PATH, logger: () => {} }
+    : { logger: () => {} };
+  const worker = await createWorker(lang, 1, opts);
   const { data } = await worker.recognize(filePath);
   await worker.terminate();
   return data.text;
@@ -51,7 +53,6 @@ async function main() {
     const text = await runOcr(filePath, lang);
     process.stdout.write(text);
   } catch {
-    // Detected language data unavailable — fall back to eng
     if (lang !== "eng") {
       const text = await runOcr(filePath, "eng");
       process.stdout.write(text);
