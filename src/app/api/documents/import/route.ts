@@ -7,10 +7,6 @@ export async function GET() {
 }
 
 export async function POST() {
-  if (importState.running) {
-    return NextResponse.json({ error: "Import already running." }, { status: 409 });
-  }
-
   // Count files first so the UI can show total immediately
   const { readdir } = await import("node:fs/promises");
   const { isSupportedDocument } = await import("@/lib/documents/file-types");
