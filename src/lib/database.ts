@@ -166,8 +166,8 @@ export async function saveProcessedDocument(input: PersistDocumentInput): Promis
       input.sourcePath,
       input.status,
       input.rawText,
-      input.extractedData,
-      input.validationIssues,
+      JSON.stringify(input.extractedData),
+      JSON.stringify(input.validationIssues),
       input.processingError ?? null,
       now,
       now
@@ -188,7 +188,7 @@ export async function saveReviewedDocument(input: ReviewUpdateInput): Promise<Pe
         status = $3,
         updated_at = $4
     WHERE id = $5`,
-    [input.correctedData, input.validationIssues, input.status, now, input.id]
+    [JSON.stringify(input.correctedData), JSON.stringify(input.validationIssues), input.status, now, input.id]
   );
 
   await getPool().query(
@@ -197,7 +197,7 @@ export async function saveReviewedDocument(input: ReviewUpdateInput): Promise<Pe
     [
       input.id,
       "review_saved",
-      { correctedData: input.correctedData, validationIssues: input.validationIssues, status: input.status },
+      JSON.stringify({ correctedData: input.correctedData, validationIssues: input.validationIssues, status: input.status }),
       now
     ]
   );
