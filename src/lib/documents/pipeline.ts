@@ -77,19 +77,23 @@ export async function processDocumentFile(input: {
     const message =
       error instanceof Error ? error.message : "Document processing failed.";
 
-    return saveProcessedDocument({
-      id: input.documentId,
-      sourceName: input.sourceName,
-      sourceType: input.sourceType,
-      mimeType,
-      fileExtension,
-      sourcePath: input.filePath,
-      rawText: "",
-      extractedData: createEmptyExtractedData(),
-      validationIssues: buildProcessingErrorIssue(message),
-      status: "needs_review",
-      processingError: message
-    });
+    try {
+      return await saveProcessedDocument({
+        id: input.documentId,
+        sourceName: input.sourceName,
+        sourceType: input.sourceType,
+        mimeType,
+        fileExtension,
+        sourcePath: input.filePath,
+        rawText: "",
+        extractedData: createEmptyExtractedData(),
+        validationIssues: buildProcessingErrorIssue(message),
+        status: "needs_review",
+        processingError: message
+      });
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -108,7 +112,7 @@ export async function importDatasetDocuments(
     .map((entry) => entry.name)
     .sort((left, right) => left.localeCompare(right));
 
-  const CONCURRENCY = 3;
+  const CONCURRENCY = 2;
   const results = [];
   let processed = 0;
   let failed = 0;

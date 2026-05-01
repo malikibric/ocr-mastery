@@ -28,7 +28,8 @@ async function runHelperScript(scriptName: string, filePath: string) {
     process.execPath,
     [path.join(process.cwd(), "scripts", scriptName), filePath],
     {
-      maxBuffer: 10 * 1024 * 1024
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: 60_000
     }
   );
 
