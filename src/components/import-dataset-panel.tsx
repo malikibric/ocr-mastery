@@ -2,11 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import type { ImportState } from "@/lib/import-state";
 
 export function ImportDatasetPanel() {
   const router = useRouter();
-  const [isImporting, setIsImporting] = useState(false);
-  const [processed, setProcessed] = useState<number | null>(null);
+  const [state, setState] = useState<ImportState | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -24,41 +24,52 @@ export function ImportDatasetPanel() {
     stopPolling();
     pollRef.current = setInterval(async () => {
       try {
-        const res = await fetch("/api/documents");
+        const res = await fetch("/api/documents/import");
         if (!res.ok) return;
-        const payload = (await res.json()) as { documents: unknown[] };
-        setProcessed(payload.documents.length);
+        const status = (await res.json()) as ImportState;
+        setState(status);
+
+        if (status.done) {
+          stopPolling();
+          if (status.error) {
+            setError(status.error);
+          } else {
+            setMessage(
+              `Imported ${status.processed} document${status.processed !== 1 ? "s" : ""}` +
+              (status.failed > 0 ? `, ${status.failed} failed.` : ".")
+            );
+          }
+          router.refresh();
+        }
       } catch {
         // ignore poll errors
       }
-    }, 1200);
+    }, 1000);
   }
 
   async function handleImport() {
-    setIsImporting(true);
     setMessage(null);
     setError(null);
-    setProcessed(null);
-    startPolling();
 
     try {
-      const response = await fetch("/api/documents/import", { method: "POST" });
+      const res = await fetch("/api/documents/import", { method: "POST" });
+      const payload = (await res.json()) as { started?: boolean; total?: number; error?: string };
 
-      if (!response.ok) {
-        const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(payload?.error ?? "Import failed.");
+      if (!res.ok) {
+        throw new Error(payload.error ?? "Import failed.");
       }
 
-      const payload = (await response.json()) as { imported: number };
-      setMessage(`Imported ${payload.imported} documents.`);
-      router.refresh();
-    } catch (importError) {
-      setError(importError instanceof Error ? importError.message : "Import failed.");
-    } finally {
-      stopPolling();
-      setIsImporting(false);
+      setState({ running: true, total: payload.total ?? 0, processed: 0, failed: 0, done: false, error: null });
+      startPolling();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Import failed.");
     }
   }
+
+  const isRunning = state?.running ?? false;
+  const pct = state && state.total > 0
+    ? Math.round(((state.processed + state.failed) / state.total) * 100)
+    : 0;
 
   return (
     <div className="panel" style={{ marginTop: 0 }}>
@@ -70,18 +81,34 @@ export function ImportDatasetPanel() {
       <div className="button-row">
         <button
           className="button"
-          disabled={isImporting}
+          disabled={isRunning}
           onClick={handleImport}
           type="button"
         >
-          {isImporting ? "Importing…" : "Import sample documents"}
+          {isRunning ? "Importing…" : "Import sample documents"}
         </button>
       </div>
-      {isImporting && processed !== null && (
-        <p className="muted" style={{ marginTop: "0.5rem" }}>
-          {processed} document{processed !== 1 ? "s" : ""} processed so far…
-        </p>
+
+      {isRunning && state && (
+        <div style={{ marginTop: "0.75rem" }}>
+          <div style={{
+            height: "6px", borderRadius: "3px",
+            background: "var(--border)", overflow: "hidden"
+          }}>
+            <div style={{
+              height: "100%", borderRadius: "3px",
+              background: "var(--accent)",
+              width: `${pct}%`,
+              transition: "width 0.4s ease"
+            }} />
+          </div>
+          <p className="muted" style={{ marginTop: "0.4rem", fontSize: "0.85rem" }}>
+            {state.processed + state.failed} / {state.total} files
+            {state.failed > 0 ? ` (${state.failed} failed)` : ""}
+          </p>
+        </div>
       )}
+
       {message && <p className="feedback-ok">{message}</p>}
       {error && <p className="feedback-err">{error}</p>}
     </div>

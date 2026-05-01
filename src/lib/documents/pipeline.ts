@@ -93,7 +93,9 @@ export async function processDocumentFile(input: {
   }
 }
 
-export async function importDatasetDocuments() {
+export async function importDatasetDocuments(
+  onProgress?: (processed: number, failed: number) => void
+) {
   const resourcesDirectory = path.join(process.cwd(), "resources");
   const entries = await fs.readdir(resourcesDirectory, { withFileTypes: true });
   const documentFiles = entries
@@ -108,18 +110,24 @@ export async function importDatasetDocuments() {
 
   const CONCURRENCY = 3;
   const results = [];
+  let processed = 0;
+  let failed = 0;
 
   for (let i = 0; i < documentFiles.length; i += CONCURRENCY) {
     const batch = documentFiles.slice(i, i + CONCURRENCY);
     const batchResults = await Promise.all(
-      batch.map((fileName) =>
-        processDocumentFile({
+      batch.map(async (fileName) => {
+        const result = await processDocumentFile({
           documentId: buildDatasetDocumentId(fileName),
           sourceName: fileName,
           sourceType: "dataset",
           filePath: path.join(resourcesDirectory, fileName)
-        })
-      )
+        });
+        if (result?.processingError) failed++;
+        else processed++;
+        onProgress?.(processed, failed);
+        return result;
+      })
     );
     results.push(...batchResults);
   }
