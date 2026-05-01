@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getActiveDocumentData } from "@/lib/documents/defaults";
-import { listDocuments } from "@/lib/database";
+import { clearAllDocuments, listDocuments } from "@/lib/database";
 
 export async function GET() {
   const documents = (await listDocuments()).map((document) => ({
@@ -9,4 +9,9 @@ export async function GET() {
   }));
 
   return NextResponse.json({ documents });
+}
+
+export async function DELETE() {
+  await clearAllDocuments();
+  return NextResponse.json({ ok: true });
 }

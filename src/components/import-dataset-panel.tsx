@@ -18,7 +18,10 @@ export function ImportDatasetPanel() {
     }
   }
 
-  useEffect(() => () => stopPolling(), []);
+  useEffect(() => {
+    fetch("/api/documents", { method: "DELETE" }).catch(() => {});
+    return () => stopPolling();
+  }, []);
 
   function startPolling() {
     stopPolling();

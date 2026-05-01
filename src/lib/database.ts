@@ -272,3 +272,9 @@ export async function getTotalsByCurrency(): Promise<Array<{ currency: string; t
 
   return [...totals.entries()].map(([currency, total]) => ({ currency, total }));
 }
+
+export async function clearAllDocuments(): Promise<void> {
+  await ensureSchema();
+  await getPool().query("DELETE FROM review_events");
+  await getPool().query("DELETE FROM documents");
+}
