@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-const { parseTsv } = require(`${process.cwd()}/scripts/extract-image-layout.cjs`);
+const {
+  parseTsv,
+  selectBestLayout
+} = require(`${process.cwd()}/scripts/extract-image-layout.cjs`);
 
 describe("parseTsv", () => {
   it("turns TSV lines into ImageOcrLayout words", () => {
@@ -16,5 +19,25 @@ describe("parseTsv", () => {
       { text: "Hello", confidence: 91.2, bbox: { x0: 10, y0: 20, x1: 50, y1: 50 } },
       { text: "World", confidence: 88, bbox: { x0: 120, y0: 20, x1: 180, y1: 50 } }
     ]);
+  });
+});
+
+describe("selectBestLayout", () => {
+  it("prefers the OCR layout candidate with more usable words", () => {
+    const emptyLayout = {
+      width: 800,
+      height: 600,
+      words: []
+    };
+    const richLayout = {
+      width: 800,
+      height: 600,
+      words: [
+        { text: "Invoice", confidence: 92, bbox: { x0: 10, y0: 20, x1: 80, y1: 50 } },
+        { text: "LOWE", confidence: 88, bbox: { x0: 90, y0: 20, x1: 140, y1: 50 } }
+      ]
+    };
+
+    expect(selectBestLayout([emptyLayout, richLayout])).toEqual(richLayout);
   });
 });

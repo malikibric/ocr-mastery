@@ -1,8 +1,8 @@
 import Link from "next/link";
-import { uploadDocumentAction } from "@/app/actions";
+import { deleteUploadDocumentAction, uploadDocumentAction } from "@/app/actions";
 import { HomeNavbar } from "@/components/home-navbar";
 import { ImportDatasetPanel } from "@/components/import-dataset-panel";
-import { getActiveDocumentData } from "@/lib/documents/defaults";
+import { FileUploadInput } from "@/components/file-upload-input";
 import {
   formatAmount,
   getStatusLabel,
@@ -11,30 +11,31 @@ import {
 import {
   getDocumentCountsByStatus,
   getTotalsByCurrency,
-  listDocuments
+  listDocumentSummaries
 } from "@/lib/database";
+import { requireReviewerPageSession } from "@/lib/reviewer-session";
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
+  const session = await requireReviewerPageSession("/");
   const [documents, counts, totalsByCurrency] = await Promise.all([
-    listDocuments(),
+    listDocumentSummaries(),
     getDocumentCountsByStatus(),
     getTotalsByCurrency()
   ]);
 
   return (
     <main className="page-shell">
-      <HomeNavbar />
+      <HomeNavbar reviewerEmail={session.reviewerEmail} />
 
       <section className="hero">
         <div>
-          <p className="muted">README-driven take-home implementation</p>
           <h1>Smart Document Processing System</h1>
           <p>
-            Ingest invoices and purchase orders from the provided dataset or
-            user uploads, extract structured fields, surface validation issues,
-            and review corrections before final approval.
+            Ingest business documents from the provided dataset or user
+            uploads, extract structured fields, surface validation issues, and
+            review corrections before final approval.
           </p>
         </div>
         <div className="actions-grid">
@@ -45,10 +46,7 @@ export default async function HomePage() {
             <p className="muted">
               Supported formats: PDF, image, CSV, and TXT.
             </p>
-            <div className="field-stack">
-              <label htmlFor="document">Choose file</label>
-              <input id="document" name="document" type="file" required />
-            </div>
+            <FileUploadInput />
             <div className="button-row" style={{ marginTop: "1rem" }}>
               <button className="button" type="submit">
                 Upload and process
@@ -135,11 +133,12 @@ export default async function HomePage() {
                   <th>Supplier</th>
                   <th>Total</th>
                   <th>Issues</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {documents.map((document) => {
-                  const data = getActiveDocumentData(document);
+                  const data = document.activeData;
 
                   return (
                     <tr key={document.id}>
@@ -149,7 +148,7 @@ export default async function HomePage() {
                         </Link>
                         <div className="doc-number">{data.documentNumber ?? "No number"}</div>
                       </td>
-                      <td>{data.documentType.replace("_", " ")}</td>
+                      <td>{data.documentType.replace(/_/g, " ")}</td>
                       <td>
                         <span
                           className="pill"
@@ -161,6 +160,22 @@ export default async function HomePage() {
                       <td>{data.supplierName ?? "—"}</td>
                       <td>{formatAmount(data.total, data.currency)}</td>
                       <td>{document.validationIssues.length}</td>
+                      <td>
+                        {document.sourceType === "upload" ? (
+                          <form action={deleteUploadDocumentAction}>
+                            <input name="documentId" type="hidden" value={document.id} />
+                            <button
+                              aria-label={`Delete upload ${document.sourceName}`}
+                              className="button-secondary button-danger"
+                              type="submit"
+                            >
+                              Delete
+                            </button>
+                          </form>
+                        ) : (
+                          <span className="muted">—</span>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}

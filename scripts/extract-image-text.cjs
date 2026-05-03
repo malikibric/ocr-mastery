@@ -14,6 +14,7 @@ async function preprocessImage(filePath) {
 
 async function main() {
   const filePath = process.argv[2];
+  const psm = process.argv[3] ?? "6";
   if (!filePath) throw new Error("An image file path is required.");
 
   let preprocessed = null;
@@ -25,7 +26,7 @@ async function main() {
 
   try {
     const stdout = await runTesseract(preprocessed, "txt", {
-      psm: "6",
+      psm,
       tessdataDir: TESSDATA_DIR
     });
     process.stdout.write(stdout);

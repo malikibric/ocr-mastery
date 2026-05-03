@@ -5,19 +5,26 @@ const execFileAsync = promisify(execFile);
 
 function buildArgs(inputPath, format, options) {
   const { psm, tessdataDir } = options;
-  return [
+  const args = [
     inputPath,
     "stdout",
-    "--tessdata-dir",
-    tessdataDir,
     "-l",
     "eng",
     "--psm",
-    String(psm),
-    "-c",
-    "preserve_interword_spaces=1",
-    format
+    String(psm)
   ];
+
+  if (format !== "tsv" && tessdataDir) {
+    args.splice(2, 0, "--tessdata-dir", tessdataDir);
+  }
+
+  if (format === "txt") {
+    args.push("-c", "preserve_interword_spaces=1");
+  } else {
+    args.push(format);
+  }
+
+  return args;
 }
 
 async function runTesseract(inputPath, format, options) {

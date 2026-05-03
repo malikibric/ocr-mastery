@@ -1,0 +1,8 @@
+.DS_Store
+.env
+.env.local
+.next
+data/uploads
+node_modules
+postgres_data
+tsconfig.tsbuildinfo

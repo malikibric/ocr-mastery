@@ -21,7 +21,10 @@ services:
       - "3000:3000"
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/mastery_task
+      FILE_ACCESS_SECRET: local-compose-file-secret
       NODE_ENV: production
+      REVIEWER_EMAIL: reviewer@example.com
+      REVIEWER_PASSWORD: local-reviewer-password
     volumes:
       - uploads_data:/app/data/uploads
     depends_on:

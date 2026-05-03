@@ -1,17 +1,18 @@
 import { NextResponse } from "next/server";
-import { getActiveDocumentData } from "@/lib/documents/defaults";
-import { clearAllDocuments, listDocuments } from "@/lib/database";
+import { listDocumentSummaries } from "@/lib/database";
+import {
+  requireReviewerApiSession,
+  unauthorizedApiResponse
+} from "@/lib/reviewer-session";
 
 export async function GET() {
-  const documents = (await listDocuments()).map((document) => ({
-    ...document,
-    activeData: getActiveDocumentData(document)
-  }));
+  const session = await requireReviewerApiSession();
+
+  if (!session) {
+    return unauthorizedApiResponse();
+  }
+
+  const documents = await listDocumentSummaries();
 
   return NextResponse.json({ documents });
-}
-
-export async function DELETE() {
-  await clearAllDocuments();
-  return NextResponse.json({ ok: true });
 }

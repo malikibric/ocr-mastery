@@ -1,9 +1,18 @@
 import { describe, it, expect } from "vitest";
 import {
+  detectUploadedDocumentType,
   getFileExtension,
   getMimeType,
+  MAX_UPLOAD_BYTES,
   isSupportedDocument
 } from "@/lib/documents/file-types";
+
+const PNG_BYTES = Uint8Array.from(
+  Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/aZ0AAAAASUVORK5CYII=",
+    "base64"
+  )
+);
 
 describe("getFileExtension", () => {
   it("returns lowercase extension without dot", () => {
@@ -43,5 +52,38 @@ describe("getMimeType", () => {
 
   it("falls back to octet-stream for unknown", () => {
     expect(getMimeType("file.xyz")).toBe("application/octet-stream");
+  });
+});
+
+describe("detectUploadedDocumentType", () => {
+  it("detects valid binary formats from file signatures", async () => {
+    await expect(
+      detectUploadedDocumentType("scan.png", PNG_BYTES)
+    ).resolves.toEqual({
+      fileExtension: "png",
+      mimeType: "image/png"
+    });
+  });
+
+  it("rejects content that does not match the file extension", async () => {
+    await expect(
+      detectUploadedDocumentType("invoice.pdf", PNG_BYTES)
+    ).rejects.toThrow(/does not match the "\.pdf" extension/);
+  });
+
+  it("accepts plain-text csv uploads and enforces the upload limit", async () => {
+    await expect(
+      detectUploadedDocumentType(
+        "lines.csv",
+        new TextEncoder().encode("description,qty\nWidget,2\n")
+      )
+    ).resolves.toEqual({
+      fileExtension: "csv",
+      mimeType: "text/csv"
+    });
+
+    await expect(
+      detectUploadedDocumentType("lines.csv", new Uint8Array(MAX_UPLOAD_BYTES + 1))
+    ).rejects.toThrow(/10 MB limit/);
   });
 });

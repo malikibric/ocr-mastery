@@ -148,10 +148,28 @@ describe("parseExtractedDocument — TXT/generic", () => {
     expect(result.issueDate).toBe("2026-03-15");
   });
 
+  it("normalizes short-year numeric dates", () => {
+    const text = "Invoice No: INV-004\nDate: 12/24/18\nTotal: 100\n";
+    const result = parseExtractedDocument("invoice.txt", "txt", text);
+    expect(result.issueDate).toBe("2018-12-24");
+  });
+
+  it("extracts compact invoice labels without a space before no", () => {
+    const text = "InvoiceNo: WIONZZS\nSupplier: Lowe Supply Co.\nTotal: 100\n";
+    const result = parseExtractedDocument("invoice.txt", "txt", text);
+    expect(result.documentNumber).toBe("WIONZZS");
+  });
+
   it("detects currency from $ symbol", () => {
     const text = "Invoice No: INV-005\nGrand Total: $4880\n";
     const result = parseExtractedDocument("invoice.txt", "txt", text);
     expect(result.currency).toBe("USD");
+  });
+
+  it("does not infer currency from unrelated OCR substrings", () => {
+    const text = "Tamil Nadu, Code: 33\nDelivery note\n";
+    const result = parseExtractedDocument("invoice.txt", "txt", text);
+    expect(result.currency).toBeNull();
   });
 
   it("extracts Sub Total with space", () => {
@@ -172,6 +190,14 @@ describe("parseExtractedDocument — TXT/generic", () => {
     expect(result.tax).toBe(540);
   });
 
+  it("does not fabricate total from subtotal and tax when no total exists", () => {
+    const text = "Invoice No: INV-008\nSub Total: $5400\nTAX 10%: $540\n";
+    const result = parseExtractedDocument("invoice.txt", "txt", text);
+    expect(result.subtotal).toBe(5400);
+    expect(result.tax).toBe(540);
+    expect(result.total).toBeNull();
+  });
+
   it("extracts company name by Ltd. suffix", () => {
     const text = "Invoice No: INV-009\nCompany Name, Ltd.\nGrand Total: $100\n";
     const result = parseExtractedDocument("invoice.txt", "txt", text);
@@ -181,5 +207,121 @@ describe("parseExtractedDocument — TXT/generic", () => {
   it("returns unknown type for unrecognized text", () => {
     const result = parseExtractedDocument("mystery.txt", "txt", "some random text Total: 5");
     expect(result.documentType).toBe("unknown");
+  });
+
+  it("extracts company details screenshots from OCR text", () => {
+    const text = `
+      Company Details
+      Organization                             Contact Name                           Contact Email                            Min. rate                                  Created at
+      StitchCredit                       Bryan Young                      bryan@stitchcredit.com         $0/mo                             04/30/2020
+      Last updated                              Customer Number (MCL)                Implementation Type                    Verification Types                           Portal Access
+      04/17/2026                   CIDO0000                    NOT SET
+    `;
+
+    const result = parseExtractedDocument("screenshot.png", "png", text);
+
+    expect(result.documentType).toBe("company_details");
+    expect(result.supplierName).toBe("StitchCredit");
+    expect(result.documentNumber).toBe("CIDO0000");
+    expect(result.issueDate).toBe("2026-04-17");
+    expect(result.currency).toBeNull();
+    expect(result.total).toBeNull();
+  });
+
+  it("prefers company-like OCR lines over noisy buyer lines", () => {
+    const text = `
+      TAX INVOICE
+      Sta Name Tom Nach, Coe 33 Buyers
+      CARER LUBES ANE. OFF PRIVATE NEPEIN LIMITED Devry ot Dole
+      GETWUN DS 12)
+    `;
+
+    const result = parseExtractedDocument("screenshot.png", "png", text);
+
+    expect(result.documentType).toBe("invoice");
+    expect(result.supplierName).toBe("CARER LUBES ANE. OFF PRIVATE NEPEIN LIMITED");
+  });
+
+  it("extracts supplier and INR currency from noisy OCR invoice blocks", () => {
+    const text = `
+      Aro Indian Rupees To res Thousand Eight Hund rod Thity Fi and Cont Fifty Tax Four paisa Only ve
+      STEINS ELECTRIC, INC CONTRACTORS ENGINEERS
+      Companys ont are Bark A> oe DATE: re
+      Thane INFORMATION SYSTEMS ALA
+      sup TOTAL 0m
+    `;
+
+    const result = parseExtractedDocument("screenshot.png", "png", text);
+
+    expect(result.supplierName).toBe("STEINS ELECTRIC, INC");
+    expect(result.currency).toBe("INR");
+    expect(result.total).toBeNull();
+  });
+
+  it("prefers the trailing company segment in noisy OCR supplier lines", () => {
+    const text = `
+      TAX INVOICE
+      WGGEOATE LOWE 0 Box 12087 Lowe Supoy Co.
+      Total: 100
+    `;
+
+    const result = parseExtractedDocument("screenshot.png", "png", text);
+
+    expect(result.supplierName).toBe("Lowe Supoy Co.");
+  });
+
+  it("does not infer totals from distant OCR noise after a total label", () => {
+    const text = `
+      STEINS ELECTRIC, INC CONTRACTORS ENGINEERS
+      Aro Indian Rupees To res Thousand Eight Hund rod Thity Fi and Cont Fifty
+      sup TOTAL 0m
+      T=
+      201
+      oe Ton er
+    `;
+
+    const result = parseExtractedDocument("screenshot.png", "png", text);
+
+    expect(result.total).toBeNull();
+  });
+
+  it("extracts invoice number, supplier, and total from short OCR image text", () => {
+    const text = `
+      Invoice 3872
+      Supplier Img 4
+      Tota 1062 EUR
+    `;
+
+    const result = parseExtractedDocument("img_5.png", "png", text);
+
+    expect(result.documentType).toBe("invoice");
+    expect(result.documentNumber).toBe("3872");
+    expect(result.supplierName).toBe("Img 4");
+    expect(result.currency).toBe("EUR");
+    expect(result.total).toBe(1062);
+    expect(result.issueDate).toBeNull();
+  });
+
+  it("repairs missing OCR decimals in image monetary totals", () => {
+    const text = `
+      INVOICE
+      INVOICE NO. 143999
+      INVOICE DATE 28 June 2016
+      Total Due: $3960.00
+      SUBTOTAL 340000
+      VAT 15% 551000
+      TOTAL DUE $391000
+    `;
+
+    const result = parseExtractedDocument(
+      "Screenshot 2026-04-28 at 18.26.27.png",
+      "png",
+      text
+    );
+
+    expect(result.documentNumber).toBe("143999");
+    expect(result.subtotal).toBe(3400);
+    expect(result.tax).toBe(510);
+    expect(result.total).toBe(3910);
   });
 });

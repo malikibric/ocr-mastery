@@ -2,15 +2,26 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { getActiveDocumentData } from "@/lib/documents/defaults";
 import {
   parseLineItemsEditorText,
   parseNumericInput
 } from "@/lib/documents/parsing";
-import { importDatasetDocuments, processDocumentFile, storeUploadedFile } from "@/lib/documents/pipeline";
+import { importDatasetDocuments, processUploadedFile } from "@/lib/documents/pipeline";
 import { validateExtractedData } from "@/lib/documents/validation";
-import { getDocumentById, saveReviewedDocument } from "@/lib/database";
+import {
+  deleteDocumentById,
+  getDocumentById,
+  saveReviewedDocument,
+  withDocumentNumberTransaction
+} from "@/lib/database";
 import type { DocumentKind, DocumentStatus } from "@/lib/documents/types";
+import type {
+  ReviewFormFields,
+  ReviewFormState
+} from "@/lib/review-form-state";
+import { requireReviewerActionSession } from "@/lib/reviewer-session";
+
+class ReviewFormValidationError extends Error {}
 
 function getFormValue(formData: FormData, key: string) {
   const value = formData.get(key);
@@ -18,7 +29,11 @@ function getFormValue(formData: FormData, key: string) {
 }
 
 function normalizeDocumentType(value: string): DocumentKind {
-  if (value === "invoice" || value === "purchase_order") {
+  if (
+    value === "invoice" ||
+    value === "purchase_order" ||
+    value === "company_details"
+  ) {
     return value;
   }
 
@@ -37,38 +52,90 @@ function getReviewedStatus(
     return "validated";
   }
 
-  return hasErrors ? "needs_review" : "uploaded";
+  return "needs_review";
+}
+
+function parseReviewedNumericField(label: string, rawValue: string) {
+  if (rawValue === "") {
+    return null;
+  }
+
+  const parsed = parseNumericInput(rawValue);
+
+  if (parsed === null) {
+    throw new ReviewFormValidationError(`${label} must be a valid number.`);
+  }
+
+  return parsed;
+}
+
+function getReviewFormFields(formData: FormData): ReviewFormFields {
+  return {
+    documentType: getFormValue(formData, "documentType"),
+    supplierName: getFormValue(formData, "supplierName"),
+    documentNumber: getFormValue(formData, "documentNumber"),
+    issueDate: getFormValue(formData, "issueDate"),
+    dueDate: getFormValue(formData, "dueDate"),
+    currency: getFormValue(formData, "currency"),
+    subtotal: getFormValue(formData, "subtotal"),
+    tax: getFormValue(formData, "tax"),
+    total: getFormValue(formData, "total"),
+    lineItems: getFormValue(formData, "lineItems")
+  };
 }
 
 export async function importDatasetAction() {
+  await requireReviewerActionSession("/");
   await importDatasetDocuments();
   revalidatePath("/");
 }
 
 export async function uploadDocumentAction(formData: FormData) {
+  await requireReviewerActionSession("/");
   const file = formData.get("document");
 
   if (!(file instanceof File) || file.size === 0) {
     throw new Error("Choose a file to upload.");
   }
 
-  const storedFile = await storeUploadedFile(file);
-  const document = await processDocumentFile({
-    sourceName: file.name,
-    sourceType: "upload",
-    filePath: storedFile.destination
-  });
+  const documents = await processUploadedFile(file);
 
-  if (!document) {
+  if (!documents.length) {
     throw new Error("Document upload did not produce a saved record.");
   }
 
   revalidatePath("/");
-  redirect(`/documents/${document.id}`);
+
+  if (documents.length === 1) {
+    redirect(`/documents/${documents[0].id}`);
+  } else {
+    redirect(`/#processed-documents`);
+  }
 }
 
-export async function saveReviewAction(formData: FormData) {
+export async function deleteUploadDocumentAction(formData: FormData) {
   const documentId = getFormValue(formData, "documentId");
+  await requireReviewerActionSession("/");
+  const existingDocument = await getDocumentById(documentId);
+
+  if (!existingDocument) {
+    throw new Error("Document not found.");
+  }
+
+  if (existingDocument.sourceType !== "upload") {
+    throw new Error("Only uploaded documents can be deleted.");
+  }
+
+  await deleteDocumentById(documentId);
+  revalidatePath("/");
+}
+
+export async function saveReviewAction(
+  _previousState: ReviewFormState,
+  formData: FormData
+): Promise<ReviewFormState> {
+  const documentId = getFormValue(formData, "documentId");
+  const reviewer = await requireReviewerActionSession(`/documents/${documentId}`);
   const reviewAction = getFormValue(formData, "reviewAction");
   const existingDocument = await getDocumentById(documentId);
 
@@ -76,28 +143,53 @@ export async function saveReviewAction(formData: FormData) {
     throw new Error("Document not found.");
   }
 
-  const baseData = getActiveDocumentData(existingDocument);
-  const correctedData = {
-    documentType: normalizeDocumentType(getFormValue(formData, "documentType")),
-    supplierName: getFormValue(formData, "supplierName") || null,
-    documentNumber: getFormValue(formData, "documentNumber") || null,
-    issueDate: getFormValue(formData, "issueDate") || null,
-    dueDate: getFormValue(formData, "dueDate") || null,
-    currency: getFormValue(formData, "currency").toUpperCase() || null,
-    subtotal:
-      parseNumericInput(getFormValue(formData, "subtotal")) ?? baseData.subtotal,
-    tax: parseNumericInput(getFormValue(formData, "tax")) ?? baseData.tax,
-    total: parseNumericInput(getFormValue(formData, "total")) ?? baseData.total,
-    lineItems: parseLineItemsEditorText(getFormValue(formData, "lineItems"))
-  };
-  const validationIssues = await validateExtractedData(correctedData, documentId);
-  const hasErrors = validationIssues.some((issue) => issue.severity === "error");
+  const fields = getReviewFormFields(formData);
 
-  await saveReviewedDocument({
-    id: documentId,
-    correctedData,
-    status: getReviewedStatus(reviewAction, hasErrors),
-    validationIssues
+  let correctedData;
+  try {
+    correctedData = {
+      documentType: normalizeDocumentType(fields.documentType),
+      supplierName: fields.supplierName || null,
+      documentNumber: fields.documentNumber || null,
+      issueDate: fields.issueDate || null,
+      dueDate: fields.dueDate || null,
+      currency: fields.currency.toUpperCase() || null,
+      subtotal: parseReviewedNumericField("Subtotal", fields.subtotal),
+      tax: parseReviewedNumericField("Tax", fields.tax),
+      total: parseReviewedNumericField("Total", fields.total),
+      lineItems: parseLineItemsEditorText(fields.lineItems)
+    };
+  } catch (error) {
+    if (error instanceof ReviewFormValidationError) {
+      return {
+        message: error.message,
+        fields,
+        formKey: String(Date.now())
+      };
+    }
+
+    throw error;
+  }
+
+  await withDocumentNumberTransaction(correctedData.documentNumber, async (queryable) => {
+    const validationIssues = await validateExtractedData(
+      correctedData,
+      documentId,
+      queryable
+    );
+    const hasErrors = validationIssues.some((issue) => issue.severity === "error");
+
+    await saveReviewedDocument(
+      {
+        id: documentId,
+        correctedData,
+        status: getReviewedStatus(reviewAction, hasErrors),
+        validationIssues,
+        reviewerEmail: reviewer.reviewerEmail,
+        reviewerName: reviewer.reviewerName
+      },
+      queryable
+    );
   });
 
   revalidatePath("/");

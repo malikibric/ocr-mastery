@@ -46,10 +46,15 @@ Create `.env.local` with at least:
 ```bash
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/mastery_task
 FILE_ACCESS_SECRET=replace-me-for-non-local-use
+REVIEWER_EMAIL=reviewer@example.com
+REVIEWER_PASSWORD=replace-me
 ```
 
 - `DATABASE_URL` is required by the app.
-- `FILE_ACCESS_SECRET` signs preview/download URLs for original uploaded files. For local development it may be omitted, but set it before sharing a deployment.
+- `DATABASE_URL` and `FILE_ACCESS_SECRET` now fail fast with a clear startup error when they are missing outside local development.
+- `FILE_ACCESS_SECRET` signs preview/download URLs for original uploaded files. For local development it may still be omitted; production and other non-local environments must set it explicitly.
+- Reviewer authentication uses Auth.js credentials. `REVIEWER_EMAIL` and `REVIEWER_PASSWORD` should be set for deployed environments; local dev/test falls back to `reviewer@example.com` / `local-reviewer-password`.
+- Uploads are capped at 10 MB per file, and binary uploads are verified against their file signatures instead of trusting the filename alone.
 
 ## Install
 
@@ -105,6 +110,8 @@ The compose setup starts:
 
 - `db` on `localhost:5432`
 - `app` on `http://localhost:3000`
+
+The app container now sets local-only reviewer credentials and a file-access secret so the production-mode compose stack can boot without extra manual env wiring.
 
 ## Architecture overview
 
@@ -169,6 +176,9 @@ document.correctedData ?? document.extractedData
 - `GET /api/documents/import` — current dataset-import job state
 - `POST /api/documents/import` — starts dataset import from `resources/`
 - `GET /api/docs` — OpenAPI document for the current API
+- `GET /api/health` — unauthenticated dependency health check for PostgreSQL and the local `tesseract` binary
+
+All `/api/documents*` routes, the dashboard, the document-review page, and the server actions are reviewer-authenticated.
 
 ## Review workflow notes
 
@@ -199,9 +209,11 @@ AI assistance was used during implementation, but the extraction rules, validati
 
 The app builds cleanly in this workspace, but **no public deployment link is configured in the repository**. The remaining deployment step is to provision PostgreSQL, set `DATABASE_URL`/`FILE_ACCESS_SECRET`, and deploy the app to a Node-compatible host such as Vercel, Render, Railway, or Fly.io.
 
+For container builds, `.dockerignore` now keeps local `.env.local`, `.next`, `node_modules`, and uploaded files out of the image context, and the runtime image installs `tesseract-ocr` explicitly.
+
 ## Improvements still worth doing
 
-1. Add authentication and authorization for the full review UI and file access.
-2. Add end-to-end browser coverage for upload, import, and review flows.
-3. Improve field extraction quality for weak/noisy OCR blocks after multi-document image splitting.
-4. Add reviewer identity/audit attribution beyond generic review events.
+1. Add end-to-end browser coverage for upload, import, and review flows.
+2. Improve field extraction quality for weak/noisy OCR blocks after multi-document image splitting.
+3. Expose richer operational metrics beyond the lightweight `/api/health` dependency check.
+4. Revisit the `file-type` bundling warning if the upload-type detection path moves deeper into the Next.js server bundle.

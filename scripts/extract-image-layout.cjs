@@ -12,6 +12,25 @@ async function preprocessImage(filePath) {
   return tmpPath;
 }
 
+function scoreLayout(layout) {
+  return layout.words.reduce((score, word) => {
+    const trimmedText = word.text.trim();
+    const confidenceScore = Math.max(0, word.confidence) / 100;
+    const lengthScore = Math.min(trimmedText.length, 16) / 16;
+    return score + 1 + confidenceScore + lengthScore;
+  }, 0);
+}
+
+function selectBestLayout(layouts) {
+  return layouts.reduce((best, candidate) => {
+    if (!best) {
+      return candidate;
+    }
+
+    return scoreLayout(candidate) > scoreLayout(best) ? candidate : best;
+  }, null);
+}
+
 function parseTsv(tsv, width, height) {
   const lines = tsv.split(/\r?\n/);
   const words = [];
@@ -40,6 +59,15 @@ function parseTsv(tsv, width, height) {
   return { width, height, words };
 }
 
+async function extractLayout(filePath) {
+  const metadata = await sharp(filePath).metadata();
+  const tsv = await runTesseract(filePath, "tsv", {
+    psm: "11",
+    tessdataDir: TESSDATA_DIR
+  });
+  return parseTsv(tsv, metadata.width ?? 0, metadata.height ?? 0);
+}
+
 async function main() {
   const filePath = process.argv[2];
   if (!filePath) throw new Error("An image file path is required.");
@@ -52,12 +80,23 @@ async function main() {
   }
 
   try {
-    const metadata = await sharp(preprocessed).metadata();
-    const tsv = await runTesseract(preprocessed, "tsv", {
-      psm: "11",
-      tessdataDir: TESSDATA_DIR
-    });
-    const layout = parseTsv(tsv, metadata.width ?? 0, metadata.height ?? 0);
+    const candidatePaths = [...new Set([preprocessed, filePath])];
+    const layouts = [];
+
+    for (const candidatePath of candidatePaths) {
+      try {
+        layouts.push(await extractLayout(candidatePath));
+      } catch {
+        // Try the next candidate path.
+      }
+    }
+
+    const layout = selectBestLayout(layouts);
+
+    if (!layout) {
+      throw new Error("Unable to extract OCR layout.");
+    }
+
     process.stdout.write(JSON.stringify(layout));
   } finally {
     if (preprocessed !== filePath && fs.existsSync(preprocessed)) {
@@ -73,4 +112,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseTsv };
+module.exports = { parseTsv, scoreLayout, selectBestLayout };

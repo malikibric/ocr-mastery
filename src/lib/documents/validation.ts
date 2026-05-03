@@ -1,5 +1,9 @@
-import { findDocumentsByDocumentNumber } from "@/lib/database";
+import {
+  findDocumentsByDocumentNumber,
+  type Queryable
+} from "@/lib/database";
 import type {
+  DocumentKind,
   ExtractedDocumentData,
   ValidationIssue
 } from "@/lib/documents/types";
@@ -24,28 +28,42 @@ function compareAmounts(left: number, right: number) {
   return Math.abs(left - right) <= 0.01;
 }
 
+function getRequiredFieldsForType(documentType: DocumentKind) {
+  switch (documentType) {
+    case "company_details":
+      return ["supplierName", "documentNumber"] satisfies Array<keyof ExtractedDocumentData>;
+    case "invoice":
+    case "purchase_order":
+    case "unknown":
+    default:
+      return [
+        "supplierName",
+        "documentNumber",
+        "issueDate",
+        "currency",
+        "total"
+      ] satisfies Array<keyof ExtractedDocumentData>;
+  }
+}
+
 export async function validateExtractedData(
   data: ExtractedDocumentData,
-  currentDocumentId?: string
+  currentDocumentId?: string,
+  queryable?: Queryable
 ) {
   const issues: ValidationIssue[] = [];
 
   if (data.documentType === "unknown") {
     addIssue(issues, {
       code: "document-type-unknown",
-      message: "Document type could not be classified as invoice or purchase order.",
+      message:
+        "Document type could not be classified as invoice, purchase order, or company details.",
       severity: "warning",
       field: "documentType"
     });
   }
 
-  const requiredFields: Array<keyof ExtractedDocumentData> = [
-    "supplierName",
-    "documentNumber",
-    "issueDate",
-    "currency",
-    "total"
-  ];
+  const requiredFields = getRequiredFieldsForType(data.documentType);
 
   for (const field of requiredFields) {
     if (data[field] === null || data[field] === "") {
@@ -152,7 +170,8 @@ export async function validateExtractedData(
   if (data.documentNumber) {
     const duplicates = await findDocumentsByDocumentNumber(
       data.documentNumber,
-      currentDocumentId
+      currentDocumentId,
+      queryable
     );
 
     if (duplicates.length > 0) {

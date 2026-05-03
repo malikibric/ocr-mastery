@@ -1,11 +1,21 @@
 import { NextResponse } from "next/server";
-import { getActiveDocumentData } from "@/lib/documents/defaults";
-import { getDocumentById, listReviewEvents } from "@/lib/database";
+import { getDocumentById, listReviewEvents, toDocumentSummary } from "@/lib/database";
+import { createDocumentFileUrl } from "@/lib/documents/file-access";
+import {
+  requireReviewerApiSession,
+  unauthorizedApiResponse
+} from "@/lib/reviewer-session";
 
 export async function GET(
   _request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
+  const session = await requireReviewerApiSession();
+
+  if (!session) {
+    return unauthorizedApiResponse();
+  }
+
   const { id } = await context.params;
   const document = await getDocumentById(id);
 
@@ -16,9 +26,12 @@ export async function GET(
     );
   }
 
+  const publicDocument = toDocumentSummary(document);
+
   return NextResponse.json({
-    document,
-    activeData: getActiveDocumentData(document),
-    reviewEvents: await listReviewEvents(id)
+    document: publicDocument,
+    activeData: publicDocument.activeData,
+    reviewEvents: await listReviewEvents(id),
+    fileUrl: createDocumentFileUrl(document.id)
   });
 }

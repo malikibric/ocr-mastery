@@ -47,6 +47,21 @@ describe("validateExtractedData — required fields", () => {
     const issues = await validateExtractedData(validDoc({ documentType: "unknown" }));
     expect(issues.some((i) => i.code === "document-type-unknown" && i.severity === "warning")).toBe(true);
   });
+
+  it("does not require finance fields for company details documents", async () => {
+    const issues = await validateExtractedData(
+      validDoc({
+        documentType: "company_details",
+        currency: null,
+        subtotal: null,
+        tax: null,
+        total: null
+      })
+    );
+
+    expect(issues.some((i) => i.code === "missing-total")).toBe(false);
+    expect(issues.some((i) => i.code === "missing-currency")).toBe(false);
+  });
 });
 
 describe("validateExtractedData — dates", () => {
@@ -128,5 +143,17 @@ describe("validateExtractedData — duplicate document number", () => {
   it("does not flag when no duplicates exist", async () => {
     const issues = await validateExtractedData(validDoc(), "current-id");
     expect(issues.some((i) => i.code === "duplicate-document-number")).toBe(false);
+  });
+
+  it("reuses the provided queryable for duplicate lookups", async () => {
+    const queryable = { query: vi.fn() } as never;
+
+    await validateExtractedData(validDoc(), "current-id", queryable);
+
+    expect(findDocumentsByDocumentNumber).toHaveBeenCalledWith(
+      "INV-001",
+      "current-id",
+      queryable
+    );
   });
 });

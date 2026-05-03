@@ -9,3 +9,6 @@ data/uploads/*
 CLAUDE.md
 newREADME.md
 plan.md
+.DS_Store
+.next-dev
+tsconfig.tsbuildinfo

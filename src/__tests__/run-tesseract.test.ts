@@ -16,15 +16,15 @@ describe("run-tesseract helper", () => {
       "--psm",
       "6",
       "-c",
-      "preserve_interword_spaces=1",
-      "txt"
+      "preserve_interword_spaces=1"
     ]);
   });
 
-  it("buildArgs supports tsv format", () => {
+  it("buildArgs supports tsv format without forcing tessdata-dir", () => {
     const args = helper.buildArgs("/tmp/in.png", "tsv", { psm: "11", tessdataDir: "/data" });
     expect(args[args.length - 1]).toBe("tsv");
     expect(args).toContain("--psm");
     expect(args).toContain("11");
+    expect(args).not.toContain("--tessdata-dir");
   });
 });

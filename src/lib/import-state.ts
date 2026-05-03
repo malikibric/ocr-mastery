@@ -7,7 +7,7 @@ export interface ImportState {
   error: string | null;
 }
 
-export const importState: ImportState = {
+export const DEFAULT_IMPORT_STATE: ImportState = {
   running: false,
   total: 0,
   processed: 0,
@@ -15,3 +15,15 @@ export const importState: ImportState = {
   done: true,
   error: null
 };
+
+export function shouldAutoCompleteImportState(state: ImportState): boolean {
+  if (!state.running || state.done) {
+    return false;
+  }
+
+  if (state.total === 0) {
+    return true;
+  }
+
+  return state.processed + state.failed >= state.total;
+}

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { logoutAction } from "@/app/auth-actions";
 import { saveReviewAction } from "@/app/actions";
 import { getActiveDocumentData } from "@/lib/documents/defaults";
 import {
@@ -9,8 +10,11 @@ import {
   getStatusLabel,
   getStatusTone
 } from "@/lib/documents/presentation";
-import { serializeLineItemsEditorText } from "@/lib/documents/parsing";
-import { getDocumentById, listReviewEvents } from "@/lib/database";
+import { createDocumentFileUrl } from "@/lib/documents/file-access";
+import { getDocumentById, getSiblingDocuments, listReviewEvents } from "@/lib/database";
+import { requireReviewerPageSession } from "@/lib/reviewer-session";
+import { FilePreview } from "@/components/file-preview";
+import { ReviewForm } from "@/components/review-form";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +24,7 @@ export default async function DocumentDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const session = await requireReviewerPageSession(`/documents/${id}`);
   const document = await getDocumentById(id);
 
   if (!document) {
@@ -27,7 +32,11 @@ export default async function DocumentDetailPage({
   }
 
   const activeData = getActiveDocumentData(document);
-  const reviewEvents = await listReviewEvents(document.id);
+  const fileUrl = createDocumentFileUrl(document.id);
+  const [reviewEvents, siblings] = await Promise.all([
+    listReviewEvents(document.id),
+    getSiblingDocuments(document.sourcePath, document.id)
+  ]);
 
   return (
     <main className="page-shell">
@@ -37,13 +46,49 @@ export default async function DocumentDetailPage({
             <Link className="back-link" href="/">← Back to dashboard</Link>
             <h1 style={{ margin: "0 0 0.375rem", fontSize: "1.25rem", fontWeight: 700, letterSpacing: "-0.02em" }}>{document.sourceName}</h1>
             <p className="muted" style={{ margin: 0 }}>
-              {document.sourceType} · {document.mimeType}
+              {document.sourceType} · {document.mimeType} · {session.reviewerEmail}
             </p>
           </div>
-          <span className="pill" data-tone={getStatusTone(document.status)}>
-            {getStatusLabel(document.status)}
-          </span>
+          <div className="button-row" style={{ marginTop: 0 }}>
+            <span className="pill" data-tone={getStatusTone(document.status)}>
+              {getStatusLabel(document.status)}
+            </span>
+            <form action={logoutAction}>
+              <button className="button-secondary" type="submit">
+                Sign out
+              </button>
+            </form>
+          </div>
         </div>
+      </section>
+
+      <section className="panel">
+        <h2>Document preview</h2>
+        <FilePreview
+          fileUrl={fileUrl}
+          mimeType={document.mimeType}
+          name={document.sourceName}
+        />
+        {siblings.length > 0 && (
+          <>
+            <p className="muted" style={{ marginTop: "0.875rem", marginBottom: "0.5rem" }}>
+              OCR detected {siblings.length + 1} documents in this upload.
+            </p>
+            <nav className="doc-tabs" aria-label="Document parts">
+              {[document, ...siblings]
+                .sort((left, right) => left.sourceName.localeCompare(right.sourceName))
+                .map((item, index) => (
+                  <Link
+                    className={`doc-tab${item.id === document.id ? " doc-tab--active" : ""}`}
+                    href={`/documents/${item.id}`}
+                    key={item.id}
+                  >
+                    Document {index + 1}
+                  </Link>
+                ))}
+            </nav>
+          </>
+        )}
       </section>
 
       <section className="details-grid">
@@ -54,7 +99,7 @@ export default async function DocumentDetailPage({
               <tbody>
                 <tr>
                   <th>Document type</th>
-                  <td>{activeData.documentType.replace("_", " ")}</td>
+                  <td>{activeData.documentType.replace(/_/g, " ")}</td>
                 </tr>
                 <tr>
                   <th>Supplier</th>
@@ -131,122 +176,7 @@ export default async function DocumentDetailPage({
           document.
         </p>
 
-        <form action={saveReviewAction}>
-          <input name="documentId" type="hidden" value={document.id} />
-          <div className="form-grid">
-            <div className="field-stack">
-              <label htmlFor="documentType">Document type</label>
-              <select
-                defaultValue={activeData.documentType}
-                id="documentType"
-                name="documentType"
-              >
-                <option value="unknown">Unknown</option>
-                <option value="invoice">Invoice</option>
-                <option value="purchase_order">Purchase order</option>
-              </select>
-            </div>
-            <div className="field-stack">
-              <label htmlFor="supplierName">Supplier / company</label>
-              <input
-                defaultValue={activeData.supplierName ?? ""}
-                id="supplierName"
-                name="supplierName"
-              />
-            </div>
-            <div className="field-stack">
-              <label htmlFor="documentNumber">Document number</label>
-              <input
-                defaultValue={activeData.documentNumber ?? ""}
-                id="documentNumber"
-                name="documentNumber"
-              />
-            </div>
-            <div className="field-stack">
-              <label htmlFor="issueDate">Issue date</label>
-              <input
-                defaultValue={activeData.issueDate ?? ""}
-                id="issueDate"
-                name="issueDate"
-                placeholder="YYYY-MM-DD"
-              />
-            </div>
-            <div className="field-stack">
-              <label htmlFor="dueDate">Due date</label>
-              <input
-                defaultValue={activeData.dueDate ?? ""}
-                id="dueDate"
-                name="dueDate"
-                placeholder="YYYY-MM-DD"
-              />
-            </div>
-            <div className="field-stack">
-              <label htmlFor="currency">Currency</label>
-              <input
-                defaultValue={activeData.currency ?? ""}
-                id="currency"
-                name="currency"
-              />
-            </div>
-            <div className="field-stack">
-              <label htmlFor="subtotal">Subtotal</label>
-              <input
-                defaultValue={activeData.subtotal ?? ""}
-                id="subtotal"
-                name="subtotal"
-              />
-            </div>
-            <div className="field-stack">
-              <label htmlFor="tax">Tax</label>
-              <input defaultValue={activeData.tax ?? ""} id="tax" name="tax" />
-            </div>
-            <div className="field-stack">
-              <label htmlFor="total">Total</label>
-              <input defaultValue={activeData.total ?? ""} id="total" name="total" />
-            </div>
-          </div>
-
-          <div className="field-stack" style={{ marginTop: "1rem" }}>
-            <label htmlFor="lineItems">Line items</label>
-            <textarea
-              defaultValue={serializeLineItemsEditorText(activeData.lineItems)}
-              id="lineItems"
-              name="lineItems"
-            />
-            <p className="muted" style={{ margin: 0 }}>
-              One line per item in the format: description | qty | unit price |
-              total
-            </p>
-          </div>
-
-          <div className="button-row" style={{ marginTop: "1rem" }}>
-            <button
-              className="button-secondary"
-              name="reviewAction"
-              type="submit"
-              value="save"
-            >
-              Save corrections
-            </button>
-            <button
-              className="button"
-              name="reviewAction"
-              type="submit"
-              value="validate"
-            >
-              Mark validated
-            </button>
-            <button
-              className="button-secondary"
-              name="reviewAction"
-              style={{ borderColor: "var(--danger-border)", color: "var(--danger)" }}
-              type="submit"
-              value="reject"
-            >
-              Reject document
-            </button>
-          </div>
-        </form>
+        <ReviewForm activeData={activeData} documentId={document.id} />
       </section>
 
       <section className="details-grid">
@@ -264,6 +194,9 @@ export default async function DocumentDetailPage({
               {reviewEvents.map((event) => (
                 <li className="history-item" key={event.id}>
                   <strong>{event.action}</strong>
+                  <p className="muted" style={{ marginBottom: "0.25rem" }}>
+                    {event.reviewer_name ?? event.reviewer_email ?? "Unknown reviewer"}
+                  </p>
                   <p className="muted" style={{ marginBottom: 0 }}>
                     {event.created_at}
                   </p>
