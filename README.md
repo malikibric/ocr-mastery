@@ -1,135 +1,207 @@
-# Smart Document Processing System  
-## Take-Home Engineering Task
+# Smart Document Processing System
 
----
+A Next.js 15 document review app that ingests invoices and purchase orders from uploads or the bundled dataset, extracts structured fields, validates the result, persists review history in PostgreSQL, and exposes both a review UI and JSON API.
 
-## Overview
+## Stack
 
-Build and deploy a system that processes real-world business documents (invoices and purchase orders), extracts structured data, validates it, and presents it through a simple interface.
+- Next.js 15 App Router
+- React 19 + TypeScript
+- PostgreSQL via `pg`
+- Vitest for unit and route/server-action tests
+- `pdfjs-dist` and `tesseract.js` via helper scripts under `scripts/`
+- Docker Compose for local Postgres + production-style app startup
 
-This task evaluates your ability to:
-- Work end-to-end
-- Handle imperfect data
-- Design flexible systems
+## What the app does
 
----
+- Accepts PDF, image, CSV, and TXT documents
+- Imports the bundled `resources/` dataset or processes manual uploads
+- Extracts document type, supplier, number, dates, currency, line items, subtotal, tax, and total
+- Recognizes `company_details` screenshots where `Organization` maps to supplier/company and `Customer Number (MCL)` maps to the document number
+- Splits some multi-document image uploads into sibling review records, including collage-style layouts with two documents on top and one below
+- Validates missing fields, invalid dates, line-item math, totals, and duplicate document numbers
+- Stores original extraction, reviewer corrections, validation findings, and review events
+- Supports the workflow `uploaded -> needs_review -> validated|rejected`
+- Shows a dashboard with document list, issue counts, and totals by currency
 
-## Input Data
+## Prerequisites
 
-- PDF documents (clean and semi-structured)
-- Images (including messy / OCR-like)
-- CSV files (structured)
-- TXT files (semi-structured)
+- Node.js 22+
+- npm
+- PostgreSQL 16+ or Docker
 
-> **Note:** Some documents intentionally contain incorrect or incomplete data.
+### Native Tesseract OCR
 
----
+Image OCR uses the native Tesseract engine (https://github.com/tesseract-ocr/tesseract), not a WASM build.
 
-## Core Requirements
+- macOS: `brew install tesseract`
+- Debian/Ubuntu: `sudo apt-get install tesseract-ocr`
+- Verify: `tesseract --version` (must be 5.x).
 
-### 1. Document Ingestion
-- Support at least 2 formats (PDF, Image, CSV, TXT)
-- Allow file upload or processing of provided dataset
+Only the English model is shipped (`eng.traineddata` at the repo root); it is loaded via `--tessdata-dir`. No `TESSDATA_PREFIX` env var is required.
 
-### 2. Data Extraction
-Extract the following fields:
-- Document type (invoice or purchase order)
-- Supplier / company name
-- Document number
-- Issue date and due date
-- Currency
-- Line items
-- Subtotal, tax, total
+## Environment
 
-### 3. Validation Engine
-- Detect incorrect totals
-- Identify missing fields
-- Validate dates
-- Validate line item calculations
-- Detect duplicate document numbers
+Create `.env.local` with at least:
 
-### 4. Review Interface
-- Display extracted data
-- Highlight validation issues
-- Allow manual corrections
-- Confirm and save final version
+```bash
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/mastery_task
+FILE_ACCESS_SECRET=replace-me-for-non-local-use
+```
 
-### 5. Data Persistence
-- Store processed documents
-- Allow viewing previously processed data
+- `DATABASE_URL` is required by the app.
+- `FILE_ACCESS_SECRET` signs preview/download URLs for original uploaded files. For local development it may be omitted, but set it before sharing a deployment.
 
-### 6. Status Workflow
-- Uploaded
-- Needs Review
-- Validated
-- Rejected
+## Install
 
-### 7. Dashboard
-- List documents
-- Show statuses
-- Display detected issues
-- Optional: totals grouped by currency
+```bash
+npm install
+```
 
-### 8. Deployment
-- Deploy the application
-- Provide a public link
+## Run locally
 
----
+1. Start PostgreSQL, either with Docker Compose:
 
-## Technical Freedom
+   ```bash
+   docker compose up db -d
+   ```
 
-You may use any programming language, framework, or database.
+   or with your own local Postgres instance.
 
----
+2. Start the app:
 
-## AI Usage
+   ```bash
+   npm run dev
+   ```
 
-AI tools are allowed, but you must:
-- Understand your implementation
-- Include your own validation logic
+3. Open `http://localhost:3000`.
 
----
+## Production build
 
-## Submission Requirements
+```bash
+npm run build
+npm run start
+```
 
-- GitHub repository
-- Live deployed application
-- README with setup instructions
-- Explanation of approach
-- AI tools used
-- Improvements you would make
+`npm run build` runs `next build` and then `scripts/fix-next-server-chunks.mjs`.
 
----
+## Tests and linting
 
-## Bonus Points
+```bash
+npm run test
+npm run test -- src/__tests__/validation.test.ts
+npm run test -- -t "flags duplicate document number"
+npm run lint
+```
 
-- OCR support for images
-- Handling messy inputs
-- Clean UI/UX
-- Unit tests
-- Docker setup
-- API documentation
+## Docker Compose
 
----
+Run the full stack with:
 
-## Time Expectation
+```bash
+docker compose up --build
+```
 
-This task is designed to be completed in approximately **3�5 days**.
+The compose setup starts:
 
----
+- `db` on `localhost:5432`
+- `app` on `http://localhost:3000`
 
-## Important Note
+## Architecture overview
 
-Some documents are intentionally incorrect.
+### App surface
 
-A strong solution not only extracts data, but also **detects and reports inconsistencies**.
+- `src/app/page.tsx` renders the dashboard and upload/import entry points
+- `src/app/documents/[id]/page.tsx` renders the review screen
+- `src/app/actions.ts` holds server actions for upload, import, and review save/validate/reject flows
+- `src/app/api/**` exposes JSON endpoints and the OpenAPI document
 
+### Document pipeline
 
-## Submission
+`src/lib/documents/pipeline.ts` orchestrates the flow:
 
-Please submit your completed task by sending:
+1. Detect file type
+2. Extract raw text in `extraction.ts`
+3. Parse structured fields in `parsing.ts`
+4. Validate with `validation.ts`
+5. Persist through `src/lib/database.ts`
 
-- GitHub repository link  
-- Live application link  
+CSV and TXT parsing stay in-process. PDF and image extraction intentionally run through helper scripts:
 
-to: **careers@mastery.ba**
+- `scripts/extract-pdf-text.mjs`
+- `scripts/extract-image-text.cjs`
+- `scripts/extract-image-layout.cjs`
+
+That boundary exists because the PDF/OCR worker libraries were unreliable inside the Next.js server bundle.
+
+For image uploads, `pipeline.ts` now tries layout-aware OCR splitting before falling back to plain OCR text splitting. That is what enables one uploaded screenshot to open as multiple review tabs when OCR can separate the documents spatially.
+
+### Persistence model
+
+`src/lib/database.ts` initializes and queries PostgreSQL tables for:
+
+- `documents`
+- `review_events`
+- `import_jobs`
+
+The app stores:
+
+- raw extracted text
+- original machine extraction
+- reviewer-corrected data
+- validation issues
+- processing errors
+- review history
+- dataset import progress
+
+### Active document data
+
+User-facing views should treat corrected reviewer data as the source of truth. `getActiveDocumentData(document)` returns:
+
+```ts
+document.correctedData ?? document.extractedData
+```
+
+## API
+
+- `GET /api/documents` — document summaries with active data
+- `GET /api/documents/:id` — a single document summary, review events, and a signed file URL
+- `GET /api/documents/:id/file?expires=...&token=...` — serves the original file when the signed query params are valid
+- `GET /api/documents/import` — current dataset-import job state
+- `POST /api/documents/import` — starts dataset import from `resources/`
+- `GET /api/docs` — OpenAPI document for the current API
+
+## Review workflow notes
+
+- Ingestion sets status to `uploaded` only when there are no error-severity validation issues; otherwise it starts at `needs_review`.
+- “Save corrections” keeps the document in `needs_review`.
+- “Mark validated” only reaches `validated` when no validation errors remain.
+- “Reject document” sets `rejected`.
+- Clearing a numeric field in the review form now persists `null` instead of silently restoring the old value.
+- The review screen renders the original file preview plus sibling document tabs below it when one upload is split into multiple logical documents.
+
+## Current OCR/review status
+
+- Public document APIs are reduced to summaries, and original file access uses signed URLs.
+- Dataset import progress is persisted in PostgreSQL instead of process memory.
+- OCR parsing includes a dedicated `company_details` flow for admin-style screenshots.
+- Multi-document image OCR supports a layout-specific `2 top + 1 bottom` split path. The screenshot `Screenshot 2026-04-28 at 18.26.01.png` now produces 3 review documents instead of 2.
+- OCR is still the main weak area for very noisy screenshots: splitting is better, but extracted field quality can still need manual reviewer correction.
+
+## Notes on the sample dataset
+
+The bundled `resources/` files are intentionally messy. It is normal for many imports to land in `needs_review`, especially when supplier data, currency, totals, or OCR quality are incomplete.
+
+## AI usage
+
+AI assistance was used during implementation, but the extraction rules, validation logic, application structure, and debugging decisions were reviewed and adjusted manually.
+
+## Deployment status
+
+The app builds cleanly in this workspace, but **no public deployment link is configured in the repository**. The remaining deployment step is to provision PostgreSQL, set `DATABASE_URL`/`FILE_ACCESS_SECRET`, and deploy the app to a Node-compatible host such as Vercel, Render, Railway, or Fly.io.
+
+## Improvements still worth doing
+
+1. Add authentication and authorization for the full review UI and file access.
+2. Add end-to-end browser coverage for upload, import, and review flows.
+3. Improve field extraction quality for weak/noisy OCR blocks after multi-document image splitting.
+4. Add reviewer identity/audit attribution beyond generic review events.
